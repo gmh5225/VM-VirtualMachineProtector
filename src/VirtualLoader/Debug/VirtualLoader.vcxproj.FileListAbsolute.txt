@@ -1,3 +1,0 @@
-C:\Users\Schnappi\source\repos\VirtualLoader\Debug\VirtualLoader.exe
-D:\GraduationDesign\VirtualMachineProtector\VirtualLoader\Debug\VirtualLoader.exe
-D:\VirtualMachineProtector\src\VirtualLoader\Debug\VirtualLoader.exe
