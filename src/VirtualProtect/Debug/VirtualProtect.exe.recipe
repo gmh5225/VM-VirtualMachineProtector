@@ -2,7 +2,7 @@
 <Project>
   <ProjectOutputs>
     <ProjectOutput>
-      <FullPath>D:\GraduationDesign\VirtualMachineProtector\Debug\VirtualProtect.exe</FullPath>
+      <FullPath>D:\VirtualMachineProtector\src\Debug\VirtualProtect.exe</FullPath>
     </ProjectOutput>
   </ProjectOutputs>
   <ContentFiles />

@@ -1,3 +1,4 @@
 C:\Users\Schnappi\source\repos\VirtualProtect\Debug\VirtualProtect.exe
 D:\source\repos\VirtualProtect\Debug\VirtualProtect.exe
 D:\GraduationDesign\VirtualMachineProtector\VirtualProtect\Debug\VirtualProtect.exe
+D:\VirtualMachineProtector\src\VirtualProtect\Debug\VirtualProtect.exe
