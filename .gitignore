@@ -1,6 +1,11 @@
-/src/VirtualLoader/.vs
+# 编译生成
+/src/Debug
+/src/Release
+# 配置
+.*
+!/.gitignore
+# 编译日志
 /src/VirtualLoader/Debug
 /src/VirtualLoader/Release
-src/VirtualProtect/.vs
-src/VirtualProtect/Debug
-src/VirtualProtect/Release
+/src/VirtualProtect/Debug
+/src/VirtualProtect/Release
