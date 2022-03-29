@@ -1,4 +1,6 @@
+// This is a personal academic project. Dear PVS-Studio, please check it.
 
+// PVS-Studio Static Code Analyzer for C, C++, C#, and Java: https://pvs-studio.com
 
 #include <windows.h>
 #include <cstdio>
@@ -6,6 +8,8 @@
 #include <tchar.h>
 #include "protect.h"
 #include "StringOperator.h"
+#include "Error.h"
+#include "PEUtils.h"
 
 #include "resource.h"
 
@@ -133,58 +137,6 @@ int WINAPI AddDialogProc(HWND hDlg, UINT uMSg, WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
-DWORD rva2raw(WORD NumOfSections, IMAGE_SECTION_HEADER* FSH, DWORD rva)
-{
-	for (int i = NumOfSections-1; i >= 0; i--)
-		if (FSH[i].VirtualAddress <= rva) 
-			return FSH[i].PointerToRawData + rva - FSH[i].VirtualAddress;
-	return 0xFFFFFFFF;
-}
-
-DWORD searchFunction(BYTE* exeMem, const char* functionName)
-{
-	IMAGE_NT_HEADERS* inh = (IMAGE_NT_HEADERS*)(exeMem + ((IMAGE_DOS_HEADER*)exeMem)->e_lfanew);
-	IMAGE_SECTION_HEADER* ish = (IMAGE_SECTION_HEADER*)(exeMem + ((IMAGE_DOS_HEADER*)exeMem)->e_lfanew + inh->FileHeader.SizeOfOptionalHeader + sizeof(IMAGE_FILE_HEADER) + 4);
-
-	IMAGE_IMPORT_DESCRIPTOR* imports = (IMAGE_IMPORT_DESCRIPTOR*)inh->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
-	imports = (IMAGE_IMPORT_DESCRIPTOR*)(exeMem + rva2raw(inh->FileHeader.NumberOfSections, ish, (DWORD)imports));
-	bool found = false;
-	while (!found && imports->Name)
-	{
-		char* libName = (char*)exeMem + rva2raw(inh->FileHeader.NumberOfSections, ish, imports->Name);
-		if (!stricmp(libName, "kernel32.dll"))
-		{
-			found = true;
-			DWORD* thunks = (DWORD*)(imports->FirstThunk);
-			thunks = (DWORD*)(exeMem + rva2raw(inh->FileHeader.NumberOfSections, ish, imports->FirstThunk));
-			bool found2 = false;
-			int k = 0;
-			while (!found2 && *thunks)
-			{
-				char* curName = (char*)exeMem + rva2raw(inh->FileHeader.NumberOfSections, ish, *thunks);
-				if (!stricmp(curName + 2, functionName)) 
-				{
-					return imports->FirstThunk + k*4;
-					found2 = true;
-				}
-				k++;
-				thunks++;
-			}
-		}
-		imports++;
-	}
-
-}
-
-#define ERROR(a) { MessageBox(0, a, TEXT("Error"), MB_ICONERROR); return; }
-#define ERROR2(a) \
-	{ \
-		MessageBox(0, a, TEXT("Error"), MB_ICONERROR); \
-		GlobalFree(items); \
-		GlobalFree(items2); \
-		vm_free(); \
-		return; \
-	}
 
 #define TRUNC(a, b) (a + (b - ((a % b) ? (a % b) : b)))
 
@@ -194,37 +146,45 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 	* hInMem是需要加壳文件内存映射
 	*/
 	HANDLE hFile = CreateFile(fileName, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-	if (hFile == INVALID_HANDLE_VALUE) ERROR(TEXT("Cannot open input file."));
+	if (hFile == INVALID_HANDLE_VALUE)
+	{
+		Error(TEXT("Cannot open input file."));
+		return;
+	}
 	DWORD tmp;
 	DWORD fSize = GetFileSize(hFile, 0);
 	BYTE* hInMem = (BYTE*)GlobalAlloc(GMEM_FIXED, fSize);
-	if (!hInMem) ERROR(TEXT("Cannot allocate memory."));
+	if (!hInMem)
+	{
+		Error(TEXT("Cannot allocate memory."));
+		return;
+	}
 	ReadFile(hFile, hInMem, fSize, &tmp, 0);
 	CloseHandle(hFile);
 
-	IMAGE_NT_HEADERS* inh = (IMAGE_NT_HEADERS*)(hInMem + ((IMAGE_DOS_HEADER*)hInMem)->e_lfanew);
-	IMAGE_SECTION_HEADER* ish = (IMAGE_SECTION_HEADER*)(hInMem + ((IMAGE_DOS_HEADER*)hInMem)->e_lfanew + inh->FileHeader.SizeOfOptionalHeader + sizeof(IMAGE_FILE_HEADER) + 4);
+	IMAGE_NT_HEADERS* ntHeaders = (IMAGE_NT_HEADERS*)(hInMem + ((IMAGE_DOS_HEADER*)hInMem)->e_lfanew);
+	IMAGE_SECTION_HEADER* sectionHeaders = (IMAGE_SECTION_HEADER*)(hInMem + ((IMAGE_DOS_HEADER*)hInMem)->e_lfanew + ntHeaders->FileHeader.SizeOfOptionalHeader + sizeof(IMAGE_FILE_HEADER) + 4);
 
 	//relocs check
 	DWORD rel = 0;
-	if (inh->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress)
+	if (ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress)
 	{
-		rel = rva2raw(inh->FileHeader.NumberOfSections, ish, inh->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
-		if (rel == 0xFFFFFFFF) ERROR(TEXT("Invalid relocations RVA."));
+		rel = RvaToRaw(ntHeaders->FileHeader.NumberOfSections, sectionHeaders, ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+		if (rel == 0xFFFFFFFF) Error(TEXT("Invalid relocations RVA."));
 		rel += (DWORD)hInMem;
 
 	}
 
 	//build protection table:
 	int itemsCnt = SendMessage(listBox, LB_GETCOUNT, 0, 0);
-	if (!itemsCnt) ERROR(TEXT("Nothing to protect (add at least one range)."));
-	DWORD* items = (DWORD*)GlobalAlloc(GMEM_FIXED, itemsCnt*8);
+	if (!itemsCnt) Error(TEXT("Nothing to protect (add at least one range)."));
+	DWORD* protectedCodeOffset = (DWORD*)GlobalAlloc(GMEM_FIXED, itemsCnt*8);
 	DWORD* items2 = (DWORD*)GlobalAlloc(GMEM_FIXED, itemsCnt*8);
 	//vm init
 	BYTE* hVMMemory;
 	DWORD vmInit;
 	DWORD vmStart;
-	srand(time(0));
+	srand(time(NULL));
 	int vmSize = vm_init(&hVMMemory, &vmInit, &vmStart);
 	//
 	int protSize = 0;
@@ -233,19 +193,19 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 		wchar_t temp[25];
 		SendMessage(listBox, LB_GETTEXT, i, (LPARAM)temp);
 		temp[8] = 0;
-		swscanf(temp, TEXT("%x"), &items[i*2]);
-		swscanf(temp + 11, TEXT("%x"), &items[i*2 + 1]);
+		swscanf(temp, TEXT("%x"), &protectedCodeOffset[i*2]);
+		swscanf(temp + 11, TEXT("%x"), &protectedCodeOffset[i*2 + 1]);
 		/*
 		* items[0] = 401896
 		* items[1] = 4018BA
 		*/
-		items[i*2] -= inh->OptionalHeader.ImageBase;
-		items[i*2 + 1] -= inh->OptionalHeader.ImageBase;
+		protectedCodeOffset[i*2] -= ntHeaders->OptionalHeader.ImageBase;
+		protectedCodeOffset[i*2 + 1] -= ntHeaders->OptionalHeader.ImageBase;
 
-		items2[i*2] = rva2raw(inh->FileHeader.NumberOfSections, ish, items[i*2]);
+		items2[i*2] = RvaToRaw(ntHeaders->FileHeader.NumberOfSections, sectionHeaders, protectedCodeOffset[i*2]);
 		if (items2[i*2] == 0xFFFFFFFF) ERROR2(TEXT("Invalid range start"));
-		items2[i*2 + 1] = items[i*2 + 1] - items[i*2];		//size
-		int t = vm_protect(hInMem + items2[i*2], items2[i*2 + 1], 0, items[i*2], (BYTE*)rel, inh->OptionalHeader.ImageBase);
+		items2[i*2 + 1] = protectedCodeOffset[i*2 + 1] - protectedCodeOffset[i*2];		//size
+		int t = vm_protect(hInMem + items2[i*2], items2[i*2 + 1], 0, protectedCodeOffset[i*2], (BYTE*)rel, ntHeaders->OptionalHeader.ImageBase);
 		if (t == -1) ERROR2(TEXT("[SIZE] Protection failed."));
 		protSize += t;
 	}
@@ -253,8 +213,8 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 
 	//first protection layer
 	//get new section rva
-	DWORD newRVA = (ish + inh->FileHeader.NumberOfSections - 1)->VirtualAddress + TRUNC((ish + inh->FileHeader.NumberOfSections - 1)->Misc.VirtualSize, inh->OptionalHeader.SectionAlignment);	
-	DWORD vAlloc = searchFunction(hInMem, "VirtualAlloc");
+	DWORD newRVA = (sectionHeaders + ntHeaders->FileHeader.NumberOfSections - 1)->VirtualAddress + TRUNC((sectionHeaders + ntHeaders->FileHeader.NumberOfSections - 1)->Misc.VirtualSize, ntHeaders->OptionalHeader.SectionAlignment);	
+	DWORD vAlloc = SearchFunction(hInMem, "VirtualAlloc");// 如果返回空，无找到函数
 	//DWORD newSecSize = TRUNC((vmSize + protSize + 0x3C + itemsCnt*0x1F), inh->OptionalHeader.FileAlignment);
 	DWORD newSecSize = vmSize + protSize + 0x3C + itemsCnt*VM_CALL_SIZE;
 	BYTE* hNewMem = (BYTE*)GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT, newSecSize);
@@ -263,8 +223,8 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 	curPos += vmSize;
 
 	//setting new entry point
-	DWORD oldEntry = inh->OptionalHeader.AddressOfEntryPoint;
-	inh->OptionalHeader.AddressOfEntryPoint = newRVA + vmSize;
+	DWORD oldEntry = ntHeaders->OptionalHeader.AddressOfEntryPoint;
+	ntHeaders->OptionalHeader.AddressOfEntryPoint = newRVA + vmSize;
 
 	//VirtualAlloc at 0xA0F8
 	static char loaderAlloc[] = 
@@ -299,8 +259,8 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 
 	for (int i = 0; i < itemsCnt; i++)
 	{
-		int _tts = vm_protect(hInMem + items2[i*2], items2[i*2 + 1], hNewMem + curPos, items[i*2], (BYTE*)rel, inh->OptionalHeader.ImageBase);
-		MAKE_VM_CALL2(inh->OptionalHeader.ImageBase, hInMem + items2[i*2], items[i*2], newRVA + curPos, items2[i*2 + 1], newRVA + vmStart, hNewMem + curPos + _tts, newRVA + curPos + _tts);
+		int _tts = vm_protect(hInMem + items2[i*2], items2[i*2 + 1], hNewMem + curPos, protectedCodeOffset[i*2], (BYTE*)rel, ntHeaders->OptionalHeader.ImageBase);
+		MAKE_VM_CALL2(ntHeaders->OptionalHeader.ImageBase, hInMem + items2[i*2], protectedCodeOffset[i*2], newRVA + curPos, items2[i*2 + 1], newRVA + vmStart, hNewMem + curPos + _tts, newRVA + curPos + _tts);
 		curPos += _tts + VM_CALL_SIZE;
 	}
 
@@ -309,17 +269,17 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 		//chuj wi czemu ;p
 		//newSecSize -= 5;
 		//
-		int vmovmSize = vm_protect_vm(hNewMem, 0, inh->OptionalHeader.ImageBase, newRVA, newRVA + curPos);
+		int vmovmSize = vm_protect_vm(hNewMem, 0, ntHeaders->OptionalHeader.ImageBase, newRVA, newRVA + curPos);
 		//BYTE* tmpMemPtr = (BYTE*)GlobalReAlloc(hNewMem, newSecSize + vmovmSize, GMEM_FIXED | GMEM_ZEROINIT);		
 		BYTE* tmpMemPtr = (BYTE*)GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT, newSecSize + vmovmSize + sizeof(loaderAlloc));
 		memmove(tmpMemPtr, hNewMem, newSecSize);
 		GlobalFree(hNewMem);
 		hNewMem = tmpMemPtr;
-		vm_protect_vm(hNewMem, hNewMem + newSecSize, inh->OptionalHeader.ImageBase, newRVA, newRVA + curPos);
+		vm_protect_vm(hNewMem, hNewMem + newSecSize, ntHeaders->OptionalHeader.ImageBase, newRVA, newRVA + curPos);
 		curPos += vmovmSize;
 		
-		oldEntry = inh->OptionalHeader.AddressOfEntryPoint;
-		inh->OptionalHeader.AddressOfEntryPoint = newRVA + curPos;
+		oldEntry = ntHeaders->OptionalHeader.AddressOfEntryPoint;
+		ntHeaders->OptionalHeader.AddressOfEntryPoint = newRVA + curPos;
 
 		*(DWORD*)(loaderAlloc + 8) = newRVA + curPos + 5;
 		//*(DWORD*)(loaderAlloc + 27) = vAlloc;
@@ -331,19 +291,19 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 		newSecSize += vmovmSize + sizeof(loaderAlloc);
 	}
 	DWORD oldNewSecSize = newSecSize;
-	newSecSize = TRUNC(newSecSize, inh->OptionalHeader.FileAlignment);	
+	newSecSize = TRUNC(newSecSize, ntHeaders->OptionalHeader.FileAlignment);	
 
 	//adding section	
-	ish += inh->FileHeader.NumberOfSections;
-	inh->FileHeader.NumberOfSections++;
-	memset(ish, 0, sizeof(IMAGE_SECTION_HEADER));
-	ish->Characteristics = 0xE00000E0;
-	ish->Misc.VirtualSize = TRUNC(newSecSize, inh->OptionalHeader.SectionAlignment);
-	inh->OptionalHeader.SizeOfImage += ish->Misc.VirtualSize;
-	memmove(ish->Name, ".VM", 4);
-	ish->PointerToRawData = fSize;
-	ish->SizeOfRawData = newSecSize;
-	ish->VirtualAddress = newRVA;
+	sectionHeaders += ntHeaders->FileHeader.NumberOfSections;
+	ntHeaders->FileHeader.NumberOfSections++;
+	memset(sectionHeaders, 0, sizeof(IMAGE_SECTION_HEADER));
+	sectionHeaders->Characteristics = 0xE00000E0;
+	sectionHeaders->Misc.VirtualSize = TRUNC(newSecSize, ntHeaders->OptionalHeader.SectionAlignment);
+	ntHeaders->OptionalHeader.SizeOfImage += sectionHeaders->Misc.VirtualSize;
+	memmove(sectionHeaders->Name, ".VM", 4);
+	sectionHeaders->PointerToRawData = fSize;
+	sectionHeaders->SizeOfRawData = newSecSize;
+	sectionHeaders->VirtualAddress = newRVA;
 
 	char newFName[MAX_PATH] = {0};
 	StringOperator<wchar_t*> cFileName(fileName);
@@ -360,7 +320,7 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 	CloseHandle(hFile);
 
 	GlobalFree(hNewMem);
-	GlobalFree(items);
+	GlobalFree(protectedCodeOffset);
 	GlobalFree(items2);
 	vm_free();
 }

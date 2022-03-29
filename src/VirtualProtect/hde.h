@@ -1,11 +1,4 @@
-/*
- *  Hacker Disassembler Engine
- *  Copyright (c) 2006-2007 Veacheslav Patkov
- *  aLL rights reserved.
- *
- *  hde.h : C/C++ header file
- *
- */
+
 
 #ifndef _HDE_H_
 #define _HDE_H_

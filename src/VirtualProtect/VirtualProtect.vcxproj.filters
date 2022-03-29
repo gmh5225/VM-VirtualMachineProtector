@@ -36,6 +36,15 @@
     <ClInclude Include="StringOperator.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Error.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="PEUtils.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="PE.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="common.cpp">
@@ -46,6 +55,15 @@
     </ClCompile>
     <ClCompile Include="protect.cpp">
       <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Error.cpp">
+      <Filter>头文件</Filter>
+    </ClCompile>
+    <ClCompile Include="PEUtils.cpp">
+      <Filter>头文件</Filter>
+    </ClCompile>
+    <ClCompile Include="PE.cpp">
+      <Filter>头文件</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

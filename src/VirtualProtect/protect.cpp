@@ -1,26 +1,10 @@
-/* x86.Virtualizer
- * Copyright 2007 ReWolf
- * Contact:
- * rewolf@rewolf.pl
- * http://rewolf.pl
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- * 
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
- */
+// This is a personal academic project. Dear PVS-Studio, please check it.
+
+// PVS-Studio Static Code Analyzer for C, C++, C#, and Java: https://pvs-studio.com
 
 
 #include "protect.h"
+#include "Error.h"
 #pragma warning(disable:4244)
 
 //jump table
@@ -39,6 +23,10 @@ int vm_init(BYTE** retMem, DWORD* _vmInit, DWORD* _vmStart)
 {	
 	//load vm image
 	HANDLE hVMFile = CreateFile(TEXT("VirtualLoader.exe"), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+	if (hVMFile == INVALID_HANDLE_VALUE)
+	{
+		Error(TEXT("Cannot open input file."));
+	}
 	DWORD vmFileSize = GetFileSize(hVMFile, 0) - 0x400;// 此处400需要根据PE头去获取
 	if (hVMMemory) GlobalFree(hVMMemory);
 	hVMMemory = (BYTE*)GlobalAlloc(GMEM_FIXED, vmFileSize);

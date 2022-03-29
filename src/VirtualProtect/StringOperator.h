@@ -24,7 +24,8 @@ public:
     wchar_t* char2wchar();
     ~StringOperator()
     {
-        delete[] m_charStr, m_wcharStr;
+        delete[] m_charStr;
+        delete[] m_wcharStr;
     }
 
 private:
@@ -43,7 +44,7 @@ char* StringOperator<T>::wchar2char()
     {
         return m_charStr;
     }
-    delete m_charStr;
+    delete[] m_charStr;
     m_charStr = new char[m_nSizeStr + 1];
     WideCharToMultiByte(CP_UTF8, 0, (wchar_t*)m_str, wcslen((const wchar_t*)m_str), m_charStr, m_nSizeStr, NULL, NULL);
     m_charStr[m_nSizeStr] = '\0';
@@ -57,7 +58,7 @@ wchar_t* StringOperator<T>::char2wchar()
     {
         return m_wcharStr;
     }
-    delete m_wcharStr;
+    delete[] m_wcharStr;
     m_wcharStr = new wchar_t[m_nSizeStr + 1];
     MultiByteToWideChar(CP_UTF8, 0, (char*)m_str, strlen((const char*)m_str), m_wcharStr, m_nSizeStr);
     m_wcharStr[m_nSizeStr] = '\0';
