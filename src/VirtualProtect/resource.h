@@ -13,7 +13,7 @@
 #define BTN_ADD                         1004
 #define BTN_EXIT                        1005
 #define BTN_PROTECT                     1006
-#define CHK_VMOVM                       1007
+
 #define EDT_FROM                        1008
 #define IDC_EDIT2                       1009
 #define EDT_TO                          1009

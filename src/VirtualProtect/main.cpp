@@ -49,59 +49,6 @@
 
 #define VM_CALL_SIZE 35
 
-int vm_protect_vm(BYTE* vm_in_exe, BYTE* outBuf, DWORD imgBase, DWORD vmRVA, DWORD newRVA)
-{
-	BYTE* hVMMemory = 0;
-	DWORD vmInit;
-	DWORD vmStart;
-	int vmSize;
-	DWORD* hVMImg;
-	if (!outBuf) 
-	{
-		vmSize = vm_init(&hVMMemory, &vmInit, &vmStart,hVMMemory);//此处第四个参数有问题
-		hVMImg = (DWORD*)vm_getVMImg();
-	}
-	else 
-	{
-		hVMImg = (DWORD*)vm_getVMImg();
-		vmSize = vm_getVMSize();
-		DWORD _ssss = (*(DWORD*)(hVMImg + 7))*4 + (*(DWORD*)(hVMImg + 8))*8 + 4;
-		vmInit = *(DWORD*)(hVMImg + 2) - _ssss;
-		vmStart = *(DWORD*)(hVMImg + 3) - _ssss;
-		hVMMemory = (BYTE*)hVMImg + _ssss;
-	}
-
-	int cnt = hVMImg[7];
-	cnt = hVMImg[cnt];
-	int curOutPos = 0;
-
-	if (outBuf) memmove(outBuf, hVMMemory, vmSize);
-	curOutPos += vmSize;	
-
-	for (int i = 0; i < cnt; i++)
-	{
-		int cur = hVMImg[7] + 2*i + 1;
-		if (!outBuf)
-		{
-			hVMImg[cur] -= (0x401000 + hVMImg[7]*4 + cnt*8 + 4);
-			hVMImg[cur + 1] -= (0x401000 + hVMImg[7]*4 + cnt*8 + 4);
-		}
-
-		int lalala = curOutPos;
-		BYTE* __outBuf;
-		if (outBuf) __outBuf = outBuf + curOutPos;
-		else __outBuf = 0;
-		curOutPos += vm_protect(vm_in_exe + hVMImg[cur], hVMImg[cur + 1] - hVMImg[cur], __outBuf, vmRVA + hVMImg[cur], 0, imgBase);
-		//MAKE_VM_CALL(imgBase, vm_in_exe + hVMImg[cur], vmRVA + hVMImg[cur], imgBase + newRVA + lalala, hVMImg[cur + 1] - hVMImg[cur], newRVA + vmStart);
-		if (outBuf)
-		{
-			MAKE_VM_CALL2(imgBase, vm_in_exe + hVMImg[cur], vmRVA + hVMImg[cur], newRVA + lalala, hVMImg[cur + 1] - hVMImg[cur], newRVA + vmStart, outBuf + curOutPos, newRVA + curOutPos);
-		}
-		curOutPos += VM_CALL_SIZE;
-	}
-
-	return curOutPos;
-}
 //-----------------------------------------------------------------------------
 DWORD ddFrom;
 DWORD ddTo;
@@ -141,7 +88,7 @@ int WINAPI AddDialogProc(HWND hDlg, UINT uMSg, WPARAM wParam, LPARAM lParam)
 
 #define TRUNC(a, b) (a + (b - ((a % b) ? (a % b) : b)))
 
-void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
+void doProtect(HWND listBox, wchar_t* fileName)
 {
 
 	DWORD tmp;
@@ -245,32 +192,7 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 		curPos += _tts + VM_CALL_SIZE;
 	}
 
-	if (vmovervm)
-	{
-		//chuj wi czemu ;p
-		//newSecSize -= 5;
-		//
-		int vmovmSize = vm_protect_vm(hNewMem, 0, ntHeaders->OptionalHeader.ImageBase, newRVA, newRVA + curPos);
-		//BYTE* tmpMemPtr = (BYTE*)GlobalReAlloc(hNewMem, newSecSize + vmovmSize, GMEM_FIXED | GMEM_ZEROINIT);		
-		BYTE* tmpMemPtr = (BYTE*)GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT, newSecSize + vmovmSize + sizeof(loaderAlloc));
-		memmove(tmpMemPtr, hNewMem, newSecSize);
-		GlobalFree(hNewMem);
-		hNewMem = tmpMemPtr;
-		vm_protect_vm(hNewMem, hNewMem + newSecSize, ntHeaders->OptionalHeader.ImageBase, newRVA, newRVA + curPos);
-		curPos += vmovmSize;
-		
-		oldEntry = ntHeaders->OptionalHeader.AddressOfEntryPoint;
-		ntHeaders->OptionalHeader.AddressOfEntryPoint = newRVA + curPos;
-
-		*(DWORD*)(loaderAlloc + 8) = newRVA + curPos + 5;
-		//*(DWORD*)(loaderAlloc + 27) = vAlloc;
-		*(DWORD*)(loaderAlloc + 43) = newRVA + newSecSize + vmInit;
-		*(DWORD*)(loaderAlloc + 52) = oldEntry;
-		memmove(hNewMem + curPos, loaderAlloc, sizeof(loaderAlloc));
-		curPos += sizeof(loaderAlloc);
-
-		newSecSize += vmovmSize + sizeof(loaderAlloc);
-	}
+	
 	DWORD oldNewSecSize = newSecSize;
 	newSecSize = TRUNC(newSecSize, ntHeaders->OptionalHeader.FileAlignment);	
 
@@ -347,11 +269,8 @@ int WINAPI DialogProc(HWND hDlg, UINT uMSg, WPARAM wParam, LPARAM lParam)
 						{
 							wchar_t fileName[MAX_PATH];
 							if (GetDlgItemText(hDlg, EDT_FILE, fileName, MAX_PATH))
-							{
-								bool vmovm = false;
-								if (SendDlgItemMessage(hDlg, CHK_VMOVM, BM_GETCHECK, 0, 0) == BST_CHECKED) vmovm = true;
-								doProtect(GetDlgItem(hDlg, LB_LIST), vmovm, fileName);
-							}
+								doProtect(GetDlgItem(hDlg, LB_LIST), fileName);
+
 							MessageBox(hDlg, L"Finished.", L"Info", MB_ICONINFORMATION);
 						}
 						break;

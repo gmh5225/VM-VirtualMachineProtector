@@ -52,10 +52,6 @@ int vm_init(BYTE** retMem, DWORD* _vmInit, DWORD* _vmStart, BYTE* hvmMemory)
 	return vmSize;
 }
 
-BYTE* vm_getVMImg()
-{
-	return hVMMemory;
-}
 
 DWORD vm_getVMSize()
 {
