@@ -12,7 +12,6 @@ void Error(const std::wstring);
 		MessageBox(0, a, TEXT("Error"), MB_ICONERROR); \
 		GlobalFree(protectedCodeOffset); \
 		GlobalFree(items2); \
-		vm_free(); \
 		return; \
 	}
 #endif // !__ERROR_H__

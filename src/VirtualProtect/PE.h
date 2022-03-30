@@ -7,15 +7,22 @@
 class PE
 {
 public:
-	PE(const std::wstring pathName, bool& ok);
-	DWORD GetNtHeaders();
-	DWORD GetFileHeaders();
-	DWORD GetOptionalHeaders();
-	DWORD GetSectionHeaders();
+	PE(const std::wstring pathName);
+	BYTE* GetPEHandle();
+	BOOL GetResult();
+	DWORD GetPEFileSize();
+	PIMAGE_NT_HEADERS GetNtHeaders();
+	PIMAGE_FILE_HEADER GetFileHeaders();
+	PIMAGE_OPTIONAL_HEADER GetOptionalHeaders();
+	WORD GetNumberOfSections();
+	PIMAGE_SECTION_HEADER GetSectionHeaders();
+	DWORD GetBaseRelocationTable();
 	~PE();
 
 private:
 	BYTE* m_moduleHandle;
+	DWORD m_fileSize;
+	BOOL m_ok;
 };
 
 

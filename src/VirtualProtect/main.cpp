@@ -10,6 +10,7 @@
 #include "StringOperator.h"
 #include "Error.h"
 #include "PEUtils.h"
+#include "PE.h"
 
 #include "resource.h"
 
@@ -50,14 +51,14 @@
 
 int vm_protect_vm(BYTE* vm_in_exe, BYTE* outBuf, DWORD imgBase, DWORD vmRVA, DWORD newRVA)
 {
-	BYTE* hVMMemory;
+	BYTE* hVMMemory = 0;
 	DWORD vmInit;
 	DWORD vmStart;
 	int vmSize;
 	DWORD* hVMImg;
 	if (!outBuf) 
 	{
-		vmSize = vm_init(&hVMMemory, &vmInit, &vmStart);
+		vmSize = vm_init(&hVMMemory, &vmInit, &vmStart,hVMMemory);//此处第四个参数有问题
 		hVMImg = (DWORD*)vm_getVMImg();
 	}
 	else 
@@ -142,38 +143,15 @@ int WINAPI AddDialogProc(HWND hDlg, UINT uMSg, WPARAM wParam, LPARAM lParam)
 
 void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 {
-	/*
-	* hInMem是需要加壳文件内存映射
-	*/
-	HANDLE hFile = CreateFile(fileName, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-	if (hFile == INVALID_HANDLE_VALUE)
-	{
-		Error(TEXT("Cannot open input file."));
-		return;
-	}
+
 	DWORD tmp;
-	DWORD fSize = GetFileSize(hFile, 0);
-	BYTE* hInMem = (BYTE*)GlobalAlloc(GMEM_FIXED, fSize);
-	if (!hInMem)
-	{
-		Error(TEXT("Cannot allocate memory."));
-		return;
-	}
-	ReadFile(hFile, hInMem, fSize, &tmp, 0);
-	CloseHandle(hFile);
 
-	IMAGE_NT_HEADERS* ntHeaders = (IMAGE_NT_HEADERS*)(hInMem + ((IMAGE_DOS_HEADER*)hInMem)->e_lfanew);
-	IMAGE_SECTION_HEADER* sectionHeaders = (IMAGE_SECTION_HEADER*)(hInMem + ((IMAGE_DOS_HEADER*)hInMem)->e_lfanew + ntHeaders->FileHeader.SizeOfOptionalHeader + sizeof(IMAGE_FILE_HEADER) + 4);
-
-	//relocs check
-	DWORD rel = 0;
-	if (ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress)
-	{
-		rel = RvaToRaw(ntHeaders->FileHeader.NumberOfSections, sectionHeaders, ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
-		if (rel == 0xFFFFFFFF) Error(TEXT("Invalid relocations RVA."));
-		rel += (DWORD)hInMem;
-
-	}
+	PE protectedFile(fileName);
+	BYTE* hInMem = protectedFile.GetPEHandle();
+	IMAGE_NT_HEADERS* ntHeaders = protectedFile.GetNtHeaders();
+	IMAGE_SECTION_HEADER* sectionHeaders = protectedFile.GetSectionHeaders();
+	DWORD rel = protectedFile.GetBaseRelocationTable();
+	DWORD fSize = protectedFile.GetPEFileSize();
 
 	//build protection table:
 	int itemsCnt = SendMessage(listBox, LB_GETCOUNT, 0, 0);
@@ -185,7 +163,10 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 	DWORD vmInit;
 	DWORD vmStart;
 	srand(time(NULL));
-	int vmSize = vm_init(&hVMMemory, &vmInit, &vmStart);
+	PE virtualMachineFile(TEXT("VirtualLoader.exe"));
+	BYTE* hvmMemory = virtualMachineFile.GetPEHandle() + virtualMachineFile.GetSectionHeaders()->PointerToRawData;
+
+	int vmSize = vm_init(&hVMMemory, &vmInit, &vmStart, hvmMemory);
 	//
 	int protSize = 0;
 	for (int i = 0; i < itemsCnt; i++)
@@ -312,7 +293,7 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 	strcat(newFName, "_vmed.exe");
 	
 	StringOperator<char*> wNewFName(newFName);
-	hFile = CreateFile(wNewFName.char2wchar(), GENERIC_WRITE, FILE_SHARE_READ, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+	HANDLE hFile = CreateFile(wNewFName.char2wchar(), GENERIC_WRITE, FILE_SHARE_READ, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
 	WriteFile(hFile, hInMem, fSize, &tmp, 0);
 	WriteFile(hFile, hNewMem, oldNewSecSize, &tmp, 0);
 	memset(hNewMem, 0, newSecSize - oldNewSecSize);
@@ -322,7 +303,6 @@ void doProtect(HWND listBox, bool vmovervm, wchar_t* fileName)
 	GlobalFree(hNewMem);
 	GlobalFree(protectedCodeOffset);
 	GlobalFree(items2);
-	vm_free();
 }
 
 int WINAPI DialogProc(HWND hDlg, UINT uMSg, WPARAM wParam, LPARAM lParam)

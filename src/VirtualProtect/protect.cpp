@@ -5,6 +5,7 @@
 
 #include "protect.h"
 #include "Error.h"
+#include "PE.h"
 #pragma warning(disable:4244)
 
 //jump table
@@ -17,23 +18,13 @@ DWORD vm_key;
 #define VM_INSTR_COUNT 256
 BYTE opcodeTab[VM_INSTR_COUNT];
 BYTE* hVMMemory = 0;
+
+
 DWORD __vmSize;
 
-int vm_init(BYTE** retMem, DWORD* _vmInit, DWORD* _vmStart)
+int vm_init(BYTE** retMem, DWORD* _vmInit, DWORD* _vmStart, BYTE* hvmMemory)
 {	
-	//load vm image
-	HANDLE hVMFile = CreateFile(TEXT("VirtualLoader.exe"), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-	if (hVMFile == INVALID_HANDLE_VALUE)
-	{
-		Error(TEXT("Cannot open input file."));
-	}
-	DWORD vmFileSize = GetFileSize(hVMFile, 0) - 0x400;// 此处400需要根据PE头去获取
-	if (hVMMemory) GlobalFree(hVMMemory);
-	hVMMemory = (BYTE*)GlobalAlloc(GMEM_FIXED, vmFileSize);
-	SetFilePointer(hVMFile, 0x400, 0, FILE_BEGIN);
-	DWORD tmp;
-	ReadFile(hVMFile, hVMMemory, vmFileSize, &tmp, 0);
-	CloseHandle(hVMFile);
+	hVMMemory = hvmMemory;
 
 	__vmSize = *(DWORD*)hVMMemory;
 	DWORD vmSize = *(DWORD*)hVMMemory;
@@ -71,10 +62,6 @@ DWORD vm_getVMSize()
 	return __vmSize;
 }
 
-void vm_free()
-{
-	GlobalFree(hVMMemory);
-}
 
 int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRVA, BYTE* relocBuf, DWORD imgBase)
 {
