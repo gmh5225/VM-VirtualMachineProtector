@@ -18,7 +18,7 @@ DWORD WINAPI _lde(BYTE* off)
 	return ((hdeStr.p_66 | hdeStr.p_67 | hdeStr.p_lock | hdeStr.p_rep | hdeStr.p_seg) << 8) | hdeStr.len;
 }
 
-void genPolyEncDec()
+void GetPolyEncDec()
 {
 	//xor eax, dword ptr [esp+18h]
 	//0x18244433
@@ -38,6 +38,8 @@ void genPolyEncDec()
 	//ROL CL  0xD2 0xC0
 	//junk    0xEB 0x01 xx
 
+
+	// 加密解密函数是随机的
 	int instr = 30;
 	int junk = 10;
 	int ptr = 11;
@@ -127,7 +129,7 @@ void genPolyEncDec()
 	}
 }
 
-int genCodeMap(BYTE* codeBase, int codeSize, DWORD* codeMap)
+int GetCodeMap(BYTE* codeBase, int codeSize, DWORD* codeMap)
 {
 	int curPos = 0;
 	int instrCount = 0;
@@ -139,6 +141,11 @@ int genCodeMap(BYTE* codeBase, int codeSize, DWORD* codeMap)
 	while (curPos != codeSize)
 	{		
 		//dis.disasm_len = lde(codeBase + curPos) & 0xFF;
+		// OPCODE length is 7
+		// 8D8405 00000000	lea eax,dword ptr ss:[ebp+eax]
+		// 8D9415 00000000	lea edx,dword ptr ss:[ebp+edx]
+		// 8D8C0D 00000000	lea ecx,dword ptr ss:[ebp+ecx]
+		// 8D9C1D 00000000	lea ebx,dword ptr ss:[ebp+ebx]
 		if ((curPos - 3 < codeSize) && 
 			((((*(DWORD*)(codeBase + curPos)) & 0xFFFFFF) == 0x05848D) ||
 			(((*(DWORD*)(codeBase + curPos)) & 0xFFFFFF) == 0x15948D) ||
@@ -156,7 +163,7 @@ int genCodeMap(BYTE* codeBase, int codeSize, DWORD* codeMap)
 	return instrCount;
 }
 
-void genPermutation(BYTE* buf, int size)
+void GetPermutation(BYTE* buf, int size)
 {
 	memset(buf, 0, size);
 	int i = 0;
@@ -213,29 +220,33 @@ void permutateJcc(WORD* buf, int elemCount, BYTE* permutation)
 	memmove(buf, temp, 2*16);
 }
 
-int genRelocMap(BYTE* relocSeg, DWORD funcRVA, int funcSize, DWORD* relocMap)
+int GetRelocMap(const BYTE* relocSeg, DWORD funcRVA, int funcSize, DWORD* relocMap)
 {
-	BYTE* relocPtr = relocSeg;
-	//DWORD delta = (DWORD)newImageBase - inh->OptionalHeader.ImageBase;
-	int relCnt = 0;
-	while (*(DWORD*)relocPtr)
+	// relocSeg 重定位表首地址
+	// funcRVA 虚拟化地址起始地址
+	// funcSize 虚拟化大小
+	// relocMap 在虚拟化块需要重定位的地址
+	// 返回值为需要修改的重定位地址数量
+	int relCount = 0;
+	while (*(DWORD*)relocSeg)
 	{
-		DWORD relocRVA = ((DWORD*)relocPtr)[0];
-		DWORD blockSize = ((DWORD*)relocPtr)[1];		
+		DWORD relocRVA = ((DWORD*)relocSeg)[0];
+		DWORD blockSize = ((DWORD*)relocSeg)[1];
 		for (int i = 0; i < (blockSize - 8) / 2; i++)
 		{
-			//if (((WORD*)(relocPtr + 8))[i] & 0xF000)
-			//{
-				//*(DWORD*)(newImageBase + relocRVA + (((WORD*)(relocPtr + 8))[i] & 0xFFF)) += delta;
-			//}
-			if ((relocRVA + (((WORD*)(relocPtr + 8))[i] & 0xFFF) >= funcRVA) &&
-				(relocRVA + (((WORD*)(relocPtr + 8))[i] & 0xFFF) < funcRVA + funcSize))
+			// 重定位表项：每个项大小为一个字，每个字的高四位被用来说明此重定位项的类型
+			// &0xFFF 去除一个字的高四位
+			// PE权威指南191页
+			if ((relocRVA + (((WORD*)(relocSeg + 8))[i] & 0xFFF) >= funcRVA) &&
+				(relocRVA + (((WORD*)(relocSeg + 8))[i] & 0xFFF) < funcRVA + funcSize))
 			{
-				if (relocMap) relocMap[relCnt] = relocRVA + (((WORD*)(relocPtr + 8))[i] & 0xFFF);
-				relCnt++;
+				if (relocMap) 
+					relocMap[relCount] = relocRVA + (((WORD*)(relocSeg + 8))[i] & 0xFFF);
+
+				relCount++;
 			}
 		}
-		relocPtr += blockSize;
+		relocSeg += blockSize;	// 遍历下一个块
 	}
-	return relCnt;
+	return relCount;
 }

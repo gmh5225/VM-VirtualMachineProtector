@@ -16,12 +16,12 @@ extern polyFunc polyEnc;
 extern polyFunc polyDec;
 extern BYTE _vm_poly_dec[121];
 
-int genCodeMap(BYTE* codeBase, int codeSize, DWORD* codeMap);
-void genPolyEncDec();
-void genPermutation(BYTE* buf, int size);
+int GetCodeMap(BYTE* codeBase, int codeSize, DWORD* codeMap);
+void GetPolyEncDec();
+void GetPermutation(BYTE* buf, int size);
 void invPerm256(BYTE* buf);
 void invPerm16(BYTE* buf);
 void permutateJcc(WORD* buf, int elemCount, BYTE* permutation);
-int genRelocMap(BYTE* relocSeg, DWORD funcRVA, int funcSize, DWORD* relocMap);
+int GetRelocMap(const BYTE* relocSeg, DWORD funcRVA, int funcSize, DWORD* relocMap);
 
 #endif

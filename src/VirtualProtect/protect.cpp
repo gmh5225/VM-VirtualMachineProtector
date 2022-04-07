@@ -17,76 +17,63 @@ DWORD vm_key;
 //vm opcode table
 #define VM_INSTR_COUNT 256
 BYTE opcodeTab[VM_INSTR_COUNT];
-BYTE* hVMMemory = 0;
 
 
-DWORD __vmSize;
+
 
 int vm_init(BYTE** retMem, DWORD* _vmInit, DWORD* _vmStart, BYTE* hvmMemory)
 {	
-	hVMMemory = hvmMemory;
+	DWORD vmSize = *(DWORD*)hvmMemory;
+	DWORD vmCodeStart = *(DWORD*)(hvmMemory + 4);
+	DWORD _ssss = (*(DWORD*)(hvmMemory + 28))*4 + (*(DWORD*)(hvmMemory + 32))*8 + 4;
+	*_vmInit = *(DWORD*)(hvmMemory + 8) - _ssss;
+	*_vmStart = *(DWORD*)(hvmMemory + 12) - _ssss;
+	DWORD vmPoly = *(DWORD*)(hvmMemory + 16);
+	DWORD vmPrefix = *(DWORD*)(hvmMemory + 20);
+	DWORD vmOpcodeTab = *(DWORD*)(hvmMemory + 24);
+	*retMem = hvmMemory + _ssss;
 
-	__vmSize = *(DWORD*)hVMMemory;
-	DWORD vmSize = *(DWORD*)hVMMemory;
-	DWORD vmCodeStart = *(DWORD*)(hVMMemory + 4);
-	DWORD _ssss = (*(DWORD*)(hVMMemory + 28))*4 + (*(DWORD*)(hVMMemory + 32))*8 + 4;
-	*_vmInit = *(DWORD*)(hVMMemory + 8) - _ssss;
-	*_vmStart = *(DWORD*)(hVMMemory + 12) - _ssss;
-	DWORD vmPoly = *(DWORD*)(hVMMemory + 16);
-	DWORD vmPrefix = *(DWORD*)(hVMMemory + 20);
-	DWORD vmOpcodeTab = *(DWORD*)(hVMMemory + 24);
-	*retMem = hVMMemory + _ssss;
+	// 虚拟化的混淆
+	GetPolyEncDec();
+	memmove(hvmMemory + vmPoly, _vm_poly_dec, sizeof(_vm_poly_dec));	// 将解密函数放置到虚拟化引擎中
 
-	genPolyEncDec();
-	memmove(hVMMemory + vmPoly, _vm_poly_dec, sizeof(_vm_poly_dec));
-	genPermutation(condTab, 16);
+	GetPermutation(condTab, 16);
 	BYTE invCondTab[16];
 	memmove(invCondTab, condTab, 16);
-	invPerm16(invCondTab);
-	permutateJcc((WORD*)(hVMMemory + vmCodeStart + 17), 16, invCondTab);
-	genPermutation(opcodeTab, VM_INSTR_COUNT);
-	memmove(hVMMemory + vmOpcodeTab, opcodeTab, VM_INSTR_COUNT);
-	invPerm256(hVMMemory + vmOpcodeTab);
-	*(WORD*)(hVMMemory + vmPrefix) = vm_instr_prefix;
+	invPerm16(invCondTab);	// Key to Value
+	permutateJcc((WORD*)(hvmMemory + vmCodeStart + 17), 16, invCondTab);
+	// 设置opcode
+	GetPermutation(opcodeTab, VM_INSTR_COUNT);
+	memmove(hvmMemory + vmOpcodeTab, opcodeTab, VM_INSTR_COUNT);
+	invPerm256(hvmMemory + vmOpcodeTab);
+	*(WORD*)(hvmMemory + vmPrefix) = vm_instr_prefix;
 
 	return vmSize;
 }
 
 
-DWORD vm_getVMSize()
-{
-	return __vmSize;
-}
 
 
-int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRVA, BYTE* relocBuf, DWORD imgBase)
+
+int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRVA, const BYTE* relocBuf, DWORD imgBase)
 {
 	/*
-	* codeBase 虚拟化代码块
+	* codeBase 虚拟化代码FOA
 	* codeSize 代码块大小
-	* inExeFuncRVA 虚拟化代码相对地址
+	* inExeFuncRVA 虚拟化代码RVA
 	* 
 	* imageBase 镜像基址
 	*/
 	//relocations
 	DWORD* relocMap = NULL;
-	int relocs;
+	int relocSize;
 	if (relocBuf)
 	{
-		relocs = genRelocMap(relocBuf, inExeFuncRVA, codeSize, 0);
-		relocMap = (DWORD*)GlobalAlloc(GMEM_FIXED, 4*relocs);
-		genRelocMap(relocBuf, inExeFuncRVA, codeSize, relocMap);
+		relocSize = GetRelocMap(relocBuf, inExeFuncRVA, codeSize, 0);
+		relocMap = (DWORD*)malloc(4*relocSize);
+		GetRelocMap(relocBuf, inExeFuncRVA, codeSize, relocMap);
 	}
-	/*/
-	char c_tmp[10];
-	sprintf(c_tmp, "rel: %d", relocs);
-	MessageBox(0, c_tmp, c_tmp, 0);
-	for (int i = 0; i < relocs; i++)
-	{
-	sprintf(c_tmp, "%08X", relocMap[i]);
-	MessageBox(0, c_tmp, c_tmp, 0);
-	}
-	//*/
+
 	//disasm_struct dis;
 	struct 
 	{
@@ -96,11 +83,11 @@ int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRV
 	int outPos = 0;
 	DWORD index = 0;
 
-	int instrCnt = genCodeMap(codeBase, codeSize, 0);
+	int instrCnt = GetCodeMap(codeBase, codeSize, 0);	// 汇编指令行数
 	if (instrCnt == -1) return -1;
-	DWORD* codeMap = (DWORD*)GlobalAlloc(GMEM_FIXED, 4*instrCnt + 4);
-	DWORD* outCodeMap = (DWORD*)GlobalAlloc(GMEM_FIXED, 4*instrCnt + 8);	//one byte more for vm_end
-	genCodeMap(codeBase, codeSize, codeMap);
+	DWORD* codeMap = (DWORD*)malloc(4*instrCnt + 4);
+	DWORD* outCodeMap = (DWORD*)malloc(4*instrCnt + 8);	//one byte more for vm_end
+	GetCodeMap(codeBase, codeSize, codeMap);
 	codeMap[instrCnt] = 0;
 	outCodeMap[instrCnt + 1] = 0;
 
@@ -122,6 +109,7 @@ int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRV
 		int opSplitSize = 0;
 		//patch for LDE engine bug ;p (kurwa?jego ma?
 		//BYTE ldeExcept[3] = {0x8D, 0x84, 0x05};
+		// 获取OPCODE长度
 		if ((curPos - 3 < codeSize) && 
 			((((*(DWORD*)(codeBase + curPos)) & 0xFFFFFF) == 0x05848D) ||
 			(((*(DWORD*)(codeBase + curPos)) & 0xFFFFFF) == 0x15948D) ||
@@ -134,34 +122,38 @@ int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRV
 		dis.disasm_len &= 0xFF;
 		if (!dis.disasm_len)
 		{
-			GlobalFree(outCodeMap);
-			GlobalFree(codeMap);
-			GlobalFree(relocMap);
+			free(outCodeMap);
+			free(codeMap);
+			free(relocMap);
 			return -1;
 		}
 		//if (outCodeBuf)
 		//{	
 		outCodeMap[index] = outPos;
 
-		//
+		// 有重定位
 		if (relocBuf && (codeMap[index] < relocMap[relocPtr] - inExeFuncRVA) &&
 			(codeMap[index + 1] > relocMap[relocPtr] - inExeFuncRVA))
 		{			
 			//MessageBox(0, "rel", "", 0);
 			if (outCodeBuf) 
 			{ 
+				// outCodeBuf 表项大小+0xFFFF+0xF0+重定位的地址位置+指令长度+计算偏移
 				PUT_VM_OP_SIZE(dis.disasm_len + 5);
 				PUT_VM_PREFIX;
-				PUT_VM_OPCODE(I_VM_RELOC);
+				PUT_VM_OPCODE(I_VM_RELOC);	// 设置标志，此处需要重定位
+				// 重定位的地址位置
 				*(outCodeBuf + outPos + 4) = relocMap[relocPtr] - inExeFuncRVA - codeMap[index];
+				// 指令长度
 				*(outCodeBuf + outPos + 5) = dis.disasm_len; 
 				memmove(outCodeBuf + outPos + 6, codeBase + curPos, dis.disasm_len);
-				(*(DWORD*)(outCodeBuf + outPos + 6 + relocMap[relocPtr] - inExeFuncRVA - codeMap[index])) -= imgBase;
+				// 计算偏移 
+				(*(DWORD*)(outCodeBuf + outPos + 6 + relocMap[relocPtr] - inExeFuncRVA - codeMap[index])) -= imgBase;	
 			} 
 			outPos += dis.disasm_len + 6;
 			relocPtr++;
 		}
-		//
+		// 无重定位
 		else if (!prefSize) {
 
 			if ((((codeBase + curPos + prefSize)[0] & 0xF0) == 0x70) || (((codeBase + curPos + prefSize)[0] == 0x0F) && (((codeBase + curPos + prefSize)[1] & 0xF0) == 0x80)))
@@ -188,8 +180,14 @@ int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRV
 
 			}
 			OPCODE_BEGIN_MAP_B
-				OPCODE_MAP_ENTRY(0xE9)
-				OPCODE_MAP_ENTRY(0xEB)
+				/*
+				* else if (0 || ((codeBase + curPos + prefSize)[0] == 0xE9) || ((codeBase + curPos + prefSize)[0] == 0xEB)) {
+				* 
+				* 
+				* 
+				*/
+				OPCODE_MAP_ENTRY(0xE9)	// E9 jmp 长跳转16位
+				OPCODE_MAP_ENTRY(0xEB)	// EB jmp 相对段跳转8位
 			OPCODE_BEGIN_MAP_E
 			{
 				if (outCodeBuf)
@@ -229,10 +227,11 @@ int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRV
 			OPCODE_END(8)
 				OPCODE_BEGIN(0xE8)	//relative direct calls
 			{
+				// outCodeBuf 表项+0xFFFF+VMOPCODE+重定位的地址位置+指令长度+计算偏移
 				PUT_VM_OP_SIZE(7);
 				PUT_VM_PREFIX;
 				if (*(DWORD*)(codeBase + curPos + 1)) PUT_VM_OPCODE(I_CALL_REL);					
-				else PUT_VM_OPCODE(I_VM_FAKE_CALL);
+				else PUT_VM_OPCODE(I_VM_FAKE_CALL);		// call 0
 				*(DWORD*)(outCodeBuf + outPos + 4) = inExeFuncRVA + *(DWORD*)(codeBase + curPos + 1) + curPos + 5;
 			}		
 			OPCODE_END(8)
@@ -506,7 +505,7 @@ int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRV
 
 			}
 			OPCODE_END(0)
-			else { MAKE_ORIG_INSTR; }		
+			else { MAKE_ORIG_INSTR; }	// outCodeBuf 	codesize+code
 		}
 		else { MAKE_ORIG_INSTR; }
 		//}
@@ -533,7 +532,7 @@ int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRV
 	//Jcc correction loop
 	if (outCodeBuf)
 	{
-		for (int i = 0; i < instrCnt + 1; i++)
+         		for (int i = 0; i < instrCnt + 1; i++)
 		{
 			if (*(WORD*)(outCodeBuf + outCodeMap[i] + 1) == vm_instr_prefix)
 			{
@@ -584,8 +583,8 @@ int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRV
 		}
 	}
 
-	GlobalFree(relocMap);
-	GlobalFree(codeMap);
-	GlobalFree(outCodeMap);
+	free(relocMap);
+	free(codeMap);
+	free(outCodeMap);
 	return outPos;
 }
