@@ -337,8 +337,8 @@ ret	0Ch
 ;---------------------------------------------------------------------------
 ;vm init
 ;[esp] ret addr
-;[esp+4] vm stack buffer (rwx)
-;[esp+8] module handle
+;[esp+4] vm stack buffer (rwx)	stackbuff
+;[esp+8] module handle	vm_test.exe
 
 
 _vm_init:

@@ -6,7 +6,12 @@
 #include "protect.h"
 #include "Error.h"
 #include "PE.h"
+#include "PEUtils.h"
+#include "StringOperator.h"
 #pragma warning(disable:4244)
+#pragma warning(disable:4996)
+#pragma warning(disable:4838)
+#pragma warning(disable:4309)
 
 //jump table
 BYTE condTab[16];
@@ -18,35 +23,205 @@ DWORD vm_key;
 #define VM_INSTR_COUNT 256
 BYTE opcodeTab[VM_INSTR_COUNT];
 
+void MAKE_VM_CALL2(BYTE* funcAddr, DWORD funcRVA, DWORD vmedFuncRVA, DWORD fSize, DWORD vmStartRVA, BYTE* inLdrAddr, DWORD inLdrRVA)
+{
+	*(BYTE*)(funcAddr) = 0xE9;
+	*(DWORD*)((BYTE*)(funcAddr)+1) = (inLdrRVA)-(funcRVA)-5;
+	memset((BYTE*)(funcAddr)+5, 0x90, (fSize)-5);
+	// 0x401896 - 0x4018BA处的修改
+
+
+	// 新的函数开始
+	*(BYTE*)(inLdrAddr) = 0xE8;
+	*(DWORD*)((BYTE*)(inLdrAddr)+1) = 0;
+	*((BYTE*)(inLdrAddr)+5) = 0x9C;
+	*(DWORD*)((BYTE*)(inLdrAddr)+6) = 0x04246C81;
+	*(DWORD*)((BYTE*)(inLdrAddr)+10) = (inLdrRVA)-(vmedFuncRVA)+5;	// ByteCode
+	*((BYTE*)(inLdrAddr)+14) = 0x9D;
+	*((BYTE*)(inLdrAddr)+15) = 0xE8;
+	*(DWORD*)((BYTE*)(inLdrAddr)+16) = 0;
+	*((BYTE*)(inLdrAddr)+20) = 0x9C;
+	*(DWORD*)((BYTE*)(inLdrAddr)+21) = 0x04246C81;
+	*(DWORD*)((BYTE*)(inLdrAddr)+25) = (inLdrRVA)-((funcRVA)+5) + 20;	// 40189B
+	*((BYTE*)(inLdrAddr)+29) = 0x9D;
+	*(BYTE*)((BYTE*)(inLdrAddr)+30) = 0xE9;
+	*(DWORD*)((BYTE*)(inLdrAddr)+31) = (vmStartRVA)-((inLdrRVA)+30) - 5;
+}
 
 
 
-int vm_init(BYTE** retMem, DWORD* _vmInit, DWORD* _vmStart, BYTE* hvmMemory)
+DWORD SectionAlignment(DWORD a, DWORD b)
+{
+	if (a % b)
+		return (a + (b - (a % b)));
+	else
+		return a;
+}
+
+int GetVMByteCodeSize(int itemsSize, DWORD* protectedCodeFOA, HWND listBox, DWORD* protectedCodeRVA, PE& protectedFile)
+{
+	int protSize = 0;
+	for (int i = 0; i < itemsSize; i++)
+	{
+		wchar_t temp[25];
+		SendMessage(listBox, LB_GETTEXT, i, (LPARAM)temp);
+		temp[8] = 0;
+		swscanf(temp, TEXT("%x"), &protectedCodeRVA[i * 2]);
+		swscanf(temp + 11, TEXT("%x"), &protectedCodeRVA[i * 2 + 1]);
+		/*
+		* items[0] = 401896
+		* items[1] = 4018BA
+		*/
+		protectedCodeRVA[i * 2] -= protectedFile.GetNtHeaders()->OptionalHeader.ImageBase;
+		protectedCodeRVA[i * 2 + 1] -= protectedFile.GetNtHeaders()->OptionalHeader.ImageBase;
+
+		protectedCodeFOA[i * 2] = RvaToRaw(protectedFile.GetNtHeaders()->FileHeader.NumberOfSections,
+			protectedFile.GetSectionHeaders(),
+			protectedCodeRVA[i * 2]);
+		//if (items2[i * 2] == 0xFFFFFFFF) ERROR2(TEXT("Invalid range start"));
+		if (protectedCodeFOA[i * 2] == 0xFFFFFFFF) return -1;
+		protectedCodeFOA[i * 2 + 1] = protectedCodeRVA[i * 2 + 1] - protectedCodeRVA[i * 2];		//size
+		auto t = vm_protect(protectedFile.GetPEHandle() + protectedCodeFOA[i * 2],
+			protectedCodeFOA[i * 2 + 1], 0,
+			protectedCodeRVA[i * 2],
+			(BYTE*)protectedFile.GetBaseRelocationTable(),
+			protectedFile.GetNtHeaders()->OptionalHeader.ImageBase);	// 获取返回值
+		if (t == -1)
+			return -1;
+		protSize += t;
+	}
+	return protSize;
+}
+
+bool MemoryWriteToFile(wchar_t* fileName, PE& protectedFile, DWORD oldNewSecSize, DWORD newSecSize, BYTE* hNewMem)
+{
+	DWORD tmp;
+	// 设置文件名
+	char newFName[MAX_PATH] = { 0 };
+	StringOperator<wchar_t*> cFileName(fileName);
+	strcpy(newFName, cFileName.wchar2char());
+	if (strlen(newFName) > 4)
+	{
+		newFName[strlen(newFName) - 4] = 0;
+	}
+	strcat(newFName, "_vmed.exe");
+
+	// 将新的节从内存写入文件
+	StringOperator<char*> wNewFName(newFName);
+	auto hFile = CreateFile(wNewFName.char2wchar(), GENERIC_WRITE, FILE_SHARE_READ, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+	WriteFile(hFile, protectedFile.GetPEHandle(), protectedFile.GetPEFileSize(), &tmp, 0);
+	WriteFile(hFile, hNewMem, oldNewSecSize, &tmp, 0);
+	memset(hNewMem, 0, newSecSize - oldNewSecSize);
+	WriteFile(hFile, hNewMem, newSecSize - oldNewSecSize, &tmp, 0);
+	CloseHandle(hFile);
+
+	return true;
+}
+
+bool AddSection(IMAGE_SECTION_HEADER* sectionHeaders, PE& protectedFile, DWORD newRVA, DWORD newSecSize)
+{
+	sectionHeaders += protectedFile.GetNtHeaders()->FileHeader.NumberOfSections;
+	protectedFile.GetNtHeaders()->FileHeader.NumberOfSections++;
+	memset(sectionHeaders, 0, sizeof(IMAGE_SECTION_HEADER));
+	sectionHeaders->Characteristics = 0xE00000E0;
+	sectionHeaders->Misc.VirtualSize = SectionAlignment(newSecSize, protectedFile.GetNtHeaders()->OptionalHeader.SectionAlignment);
+	protectedFile.GetNtHeaders()->OptionalHeader.SizeOfImage += sectionHeaders->Misc.VirtualSize;
+	memmove(sectionHeaders->Name, ".VM", 4);
+	sectionHeaders->PointerToRawData = protectedFile.GetPEFileSize();
+	sectionHeaders->SizeOfRawData = newSecSize;
+	sectionHeaders->VirtualAddress = newRVA;
+	return true;
+}
+
+bool SetVMEntryPoint(PE& protectedFile, DWORD newRVA, int vmSize, DWORD vmInit, BYTE* hNewMem, int& curPos)
+{
+	//setting new entry point
+	auto oldEntry = protectedFile.GetNtHeaders()->OptionalHeader.AddressOfEntryPoint;
+	protectedFile.GetNtHeaders()->OptionalHeader.AddressOfEntryPoint = newRVA + vmSize;
+
+	//VirtualAlloc at 0xA0F8
+	// SetVMStart
+	static char VMEntry[] =
+	{
+		0xE8, 0x00, 0x00, 0x00, 0x00,       //CALL    vm_test2.004120DA
+		0x5B,                               //POP     EBX
+		0x81, 0xEB, 0xDA, 0x20, 0x01, 0x00, //SUB     EBX,120DA
+		0x6A, 0x40,							//PUSH    40
+		0x68, 0x00, 0x10, 0x00, 0x00,       //PUSH    1000
+		0x68, 0x00, 0x10, 0x00, 0x00,       //PUSH    1000
+		0x6A, 0x00,                         //PUSH    0
+		0xB8, 0x34, 0x12, 0x00, 0x00,       //MOV     EAX,1234
+		0x03, 0xC3,                         //ADD     EAX,EBX
+		0xFF, 0x10,                         //CALL    [EAX]
+		0x53,                               //PUSH    EBX
+		0x05, 0x00, 0x10, 0x00, 0x00,       //ADD     EAX,1000
+		0x50,                               //PUSH    EAX
+		0xB8, 0x34, 0x12, 0x00, 0x00,       //MOV     EAX,1234
+		0x03, 0xC3,                         //ADD     EAX,EBX
+		0xFF, 0xD0,                         //CALL    EAX
+		0xB8, 0x34, 0x12, 0x00, 0x00,       //MOV     EAX,1234
+		0x03, 0xC3,                         //ADD     EAX,EBX
+		0xFF, 0xE0                          //JMP     EAX
+	};
+
+	auto dwVirtualAllocOfAddress = SearchFunction(protectedFile.GetPEHandle(), "VirtualAlloc");// 如果返回空，无找到函数
+	//DWORD vAllocbat = (DWORD)GetProcAddress(GetModuleHandle(TEXT("kernel32.dll")),"VirtualAlloc");
+	//correcting loader:
+	*(DWORD*)(VMEntry + 8) = newRVA + vmSize + 5;
+	*(DWORD*)(VMEntry + 27) = dwVirtualAllocOfAddress;
+	*(DWORD*)(VMEntry + 43) = newRVA + vmInit;
+	*(DWORD*)(VMEntry + 52) = oldEntry;
+	memmove(hNewMem + vmSize, VMEntry, sizeof(VMEntry));
+	curPos += sizeof(VMEntry);
+	return true;
+}
+
+bool SetByteCode(PE& protectedFile, int& curPos, DWORD newRVA, DWORD vmStart, DWORD* protectedCodeOffset, int itemsCnt, DWORD* items2, BYTE* hNewMem)
+{
+	for (int i = 0; i < itemsCnt; i++)
+	{
+		auto _tts = vm_protect(protectedFile.GetPEHandle() + items2[i * 2],
+			items2[i * 2 + 1], hNewMem + curPos,
+			protectedCodeOffset[i * 2],
+			(BYTE*)protectedFile.GetBaseRelocationTable(),
+			protectedFile.GetNtHeaders()->OptionalHeader.ImageBase);
+		//MAKE_VM_CALL2(ntHeaders->OptionalHeader.ImageBase, protectedFile.GetPEHandle() + items2[i*2], protectedCodeOffset[i*2], newRVA + curPos, items2[i*2 + 1], newRVA + vmStart, hNewMem + curPos + _tts, newRVA + curPos + _tts);
+		MAKE_VM_CALL2(protectedFile.GetPEHandle() + items2[i * 2],
+			protectedCodeOffset[i * 2],
+			newRVA + curPos, items2[i * 2 + 1],
+			newRVA + vmStart, hNewMem + curPos + _tts,
+			newRVA + curPos + _tts);
+		curPos += _tts + VM_CALL_SIZE;
+	}
+	return true;
+}
+
+int vm_init(BYTE** lpVirtualMachine, DWORD* dwVMInit, DWORD* dwVMStart, BYTE* firstSectionAddress)
 {	
-	DWORD vmSize = *(DWORD*)hvmMemory;
-	DWORD vmCodeStart = *(DWORD*)(hvmMemory + 4);
-	DWORD _ssss = (*(DWORD*)(hvmMemory + 28))*4 + (*(DWORD*)(hvmMemory + 32))*8 + 4;
-	*_vmInit = *(DWORD*)(hvmMemory + 8) - _ssss;
-	*_vmStart = *(DWORD*)(hvmMemory + 12) - _ssss;
-	DWORD vmPoly = *(DWORD*)(hvmMemory + 16);
-	DWORD vmPrefix = *(DWORD*)(hvmMemory + 20);
-	DWORD vmOpcodeTab = *(DWORD*)(hvmMemory + 24);
-	*retMem = hvmMemory + _ssss;
+	DWORD vmSize = *(DWORD*)firstSectionAddress;
+	DWORD vmCodeStart = *(DWORD*)(firstSectionAddress + 4);
+	DWORD dwExportTable = (*(DWORD*)(firstSectionAddress + 28))*4 + (*(DWORD*)(firstSectionAddress + 32))*8 + 4;
+	*dwVMInit = *(DWORD*)(firstSectionAddress + 8) - dwExportTable;
+	*dwVMStart = *(DWORD*)(firstSectionAddress + 12) - dwExportTable;
+	DWORD vmPoly = *(DWORD*)(firstSectionAddress + 16);
+	DWORD vmPrefix = *(DWORD*)(firstSectionAddress + 20);
+	DWORD vmOpcodeTab = *(DWORD*)(firstSectionAddress + 24);
+	*lpVirtualMachine = firstSectionAddress + dwExportTable;
 
 	// 虚拟化的混淆
 	GetPolyEncDec();
-	memmove(hvmMemory + vmPoly, _vm_poly_dec, sizeof(_vm_poly_dec));	// 将解密函数放置到虚拟化引擎中
+	memmove(firstSectionAddress + vmPoly, _vm_poly_dec, sizeof(_vm_poly_dec));	// 将解密函数放置到虚拟化引擎中
 
 	GetPermutation(condTab, 16);
 	BYTE invCondTab[16];
 	memmove(invCondTab, condTab, 16);
-	invPerm16(invCondTab);	// Key to Value
-	permutateJcc((WORD*)(hvmMemory + vmCodeStart + 17), 16, invCondTab);
+	KeyToValue16(invCondTab);	// Key to Value
+	permutateJcc((WORD*)(firstSectionAddress + vmCodeStart + 17), 16, invCondTab);
 	// 设置opcode
 	GetPermutation(opcodeTab, VM_INSTR_COUNT);
-	memmove(hvmMemory + vmOpcodeTab, opcodeTab, VM_INSTR_COUNT);
-	invPerm256(hvmMemory + vmOpcodeTab);
-	*(WORD*)(hvmMemory + vmPrefix) = vm_instr_prefix;
+	memmove(firstSectionAddress + vmOpcodeTab, opcodeTab, VM_INSTR_COUNT);
+	KeyToValue256(firstSectionAddress + vmOpcodeTab);
+	*(WORD*)(firstSectionAddress + vmPrefix) = vm_instr_prefix;
 
 	return vmSize;
 }
@@ -83,7 +258,7 @@ int vm_protect(BYTE* codeBase, int codeSize, BYTE* outCodeBuf, DWORD inExeFuncRV
 	int outPos = 0;
 	DWORD index = 0;
 
-	int instrCnt = GetCodeMap(codeBase, codeSize, 0);	// 汇编指令行数
+	auto instrCnt = GetCodeMap(codeBase, codeSize, 0);	// 汇编指令行数
 	if (instrCnt == -1) return -1;
 	DWORD* codeMap = (DWORD*)malloc(4*instrCnt + 4);
 	DWORD* outCodeMap = (DWORD*)malloc(4*instrCnt + 8);	//one byte more for vm_end

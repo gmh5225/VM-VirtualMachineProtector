@@ -9,43 +9,10 @@
 #include "protect.h"
 #include "StringOperator.h"
 #include "Error.h"
-#include "PEUtils.h"
-#include "PE.h"
-
 #include "resource.h"
 
-#pragma warning (disable:4996)
-#pragma warning(disable:4838)
-#pragma warning(disable:4309)
+#pragma warning(disable:4996)
 
-
-void MAKE_VM_CALL2(BYTE* funcAddr, DWORD funcRVA, DWORD vmedFuncRVA, DWORD fSize, DWORD vmStartRVA, BYTE* inLdrAddr, DWORD inLdrRVA)
-{
-	*(BYTE*)(funcAddr) = 0xE9;
-	*(DWORD*)((BYTE*)(funcAddr)+1) = (inLdrRVA)-(funcRVA)-5;
-	memset((BYTE*)(funcAddr)+5, 0x90, (fSize)-5);
-	// 0x401896 - 0x4018BA处的修改
-
-
-	// 新的函数开始
-	*(BYTE*)(inLdrAddr) = 0xE8;
-	*(DWORD*)((BYTE*)(inLdrAddr)+1) = 0;
-	*((BYTE*)(inLdrAddr)+5) = 0x9C;
-	*(DWORD*)((BYTE*)(inLdrAddr)+6) = 0x04246C81;
-	*(DWORD*)((BYTE*)(inLdrAddr)+10) = (inLdrRVA)-(vmedFuncRVA)+5;
-	*((BYTE*)(inLdrAddr)+14) = 0x9D;
-	*((BYTE*)(inLdrAddr)+15) = 0xE8;
-	*(DWORD*)((BYTE*)(inLdrAddr)+16) = 0;
-	*((BYTE*)(inLdrAddr)+20) = 0x9C;
-	*(DWORD*)((BYTE*)(inLdrAddr)+21) = 0x04246C81;
-	*(DWORD*)((BYTE*)(inLdrAddr)+25) = (inLdrRVA)-((funcRVA)+5) + 20;
-	*((BYTE*)(inLdrAddr)+29) = 0x9D;
-	*(BYTE*)((BYTE*)(inLdrAddr)+30) = 0xE9;
-	*(DWORD*)((BYTE*)(inLdrAddr)+31) = (vmStartRVA)-((inLdrRVA)+30) - 5;
-}
-	
-
-#define VM_CALL_SIZE 35
 
 //-----------------------------------------------------------------------------
 DWORD ddFrom;
@@ -86,192 +53,74 @@ int WINAPI AddDialogProc(HWND hDlg, UINT uMSg, WPARAM wParam, LPARAM lParam)
 }
 
 
-DWORD TRUNC(DWORD a, DWORD b)
-{
-	if (a % b)
-		return (a + (b - (a % b)));
-	else
-		return a;
-}
-void doProtect(HWND listBox, wchar_t* fileName)
-{
 
-	DWORD tmp;
 
+void DoProtect(HWND listBox, wchar_t* fileName)
+{
 	PE protectedFile(fileName);
-	IMAGE_SECTION_HEADER* sectionHeaders = protectedFile.GetSectionHeaders();
-	//DWORD rel = protectedFile.GetBaseRelocationTable();
-	DWORD fSize = protectedFile.GetPEFileSize();
 
 	//build protection table:
-	int itemsCnt = SendMessage(listBox, LB_GETCOUNT, 0, 0);
-	if (!itemsCnt) Error(TEXT("Nothing to protect (add at least one range)."));
-	DWORD* protectedCodeOffset = NULL;
-	protectedCodeOffset = (DWORD*)malloc(itemsCnt * 8);
-	if (protectedCodeOffset == NULL)
+	int itemsSize = SendMessage(listBox, LB_GETCOUNT, 0, 0);
+	if (!itemsSize) Error(TEXT("Nothing to protect (add at least one range)."));
+	DWORD* protectedCodeRVA = NULL;
+	protectedCodeRVA = (DWORD*)malloc(itemsSize * 8);
+	if (protectedCodeRVA == NULL)
+		return;
+	DWORD* protectedCoedFOA = NULL;
+	protectedCoedFOA = (DWORD*)malloc(itemsSize * 8);
+	if (protectedCoedFOA == NULL)
 	{
+		free(protectedCodeRVA);
 		return;
 	}
-	DWORD* items2 = NULL;
-	items2 = (DWORD*)malloc(itemsCnt * 8);
-	
-	if (items2 == NULL)
-	{
-		free(protectedCodeOffset);
-		return;
-	}
-	//vm init
-	BYTE* hVMMemory;
-	DWORD vmInit;
-	DWORD vmStart;
+
 	srand(time(NULL));
 	PE virtualMachineFile(TEXT("VirtualLoader.exe"));
-	BYTE* hvmMemory = virtualMachineFile.GetPEHandle() + virtualMachineFile.GetSectionHeaders()->PointerToRawData;
-	// 获取虚拟引擎大小
-	// 处理加密函数
-	// 设置OPCODE
-	int vmSize = vm_init(&hVMMemory, &vmInit, &vmStart, hvmMemory);
+
+	BYTE* hVMMemory;
+	DWORD dwVMInit;
+	DWORD dwVMStart;
+	int vmSize = vm_init(&hVMMemory, &dwVMInit, &dwVMStart, virtualMachineFile.GetPEHandle() + virtualMachineFile.GetSectionHeaders()->PointerToRawData);
+
 	// 获取虚拟指令需要大小
-	int protSize = 0;
-	for (int i = 0; i < itemsCnt; i++)
+	int vmByteCodeSize = 0;
+	vmByteCodeSize = GetVMByteCodeSize(itemsSize, protectedCoedFOA, listBox, protectedCodeRVA, protectedFile);
+	if (vmByteCodeSize == -1)
 	{
-		wchar_t temp[25];
-		SendMessage(listBox, LB_GETTEXT, i, (LPARAM)temp);
-		temp[8] = 0;
-		swscanf(temp, TEXT("%x"), &protectedCodeOffset[i*2]);
-		swscanf(temp + 11, TEXT("%x"), &protectedCodeOffset[i*2 + 1]);
-		/*
-		* items[0] = 401896
-		* items[1] = 4018BA
-		*/
-		protectedCodeOffset[i*2] -= protectedFile.GetNtHeaders()->OptionalHeader.ImageBase;
-		protectedCodeOffset[i*2 + 1] -= protectedFile.GetNtHeaders()->OptionalHeader.ImageBase;
-
-		items2[i*2] = RvaToRaw(protectedFile.GetNtHeaders()->FileHeader.NumberOfSections, 
-			protectedFile.GetSectionHeaders(), 
-			protectedCodeOffset[i*2]);
-		if (items2[i*2] == 0xFFFFFFFF) ERROR2(TEXT("Invalid range start"));
-		items2[i*2 + 1] = protectedCodeOffset[i*2 + 1] - protectedCodeOffset[i*2];		//size
-		int t = vm_protect(protectedFile.GetPEHandle() + items2[i*2], 
-			items2[i*2 + 1], 0, 
-			protectedCodeOffset[i*2], 
-			(BYTE*)protectedFile.GetBaseRelocationTable(), 
-			protectedFile.GetNtHeaders()->OptionalHeader.ImageBase);	// 获取返回值
-		if (t == -1) ERROR2(TEXT("[SIZE] Protection failed."));
-		protSize += t;
+		ERROR2(TEXT("[SIZE] Protection failed."));
+		return;
 	}
-	//loader size = 0x3C
 
-	//first protection layer
-	//get new section rva
-	DWORD newRVA = (protectedFile.GetSectionHeaders() + protectedFile.GetNtHeaders()->FileHeader.NumberOfSections - 1)->VirtualAddress + TRUNC((protectedFile.GetSectionHeaders() + protectedFile.GetNtHeaders()->FileHeader.NumberOfSections - 1)->Misc.VirtualSize, 
+	DWORD dwNewSectionRVA = (protectedFile.GetSectionHeaders() + protectedFile.GetNtHeaders()->FileHeader.NumberOfSections - 1)->VirtualAddress + SectionAlignment((protectedFile.GetSectionHeaders() + protectedFile.GetNtHeaders()->FileHeader.NumberOfSections - 1)->Misc.VirtualSize, 
 		protectedFile.GetNtHeaders()->OptionalHeader.SectionAlignment);
-	DWORD vAlloc = SearchFunction(protectedFile.GetPEHandle(), "VirtualAlloc");// 如果返回空，无找到函数
-	//DWORD newSecSize = TRUNC((vmSize + protSize + 0x3C + itemsCnt*0x1F), inh->OptionalHeader.FileAlignment);
-	DWORD newSecSize = vmSize + protSize + 0x3C + itemsCnt*VM_CALL_SIZE;
-	// 3C 就是loaderAlloc[]大小
+	
+	DWORD dwNewSectionSize = vmSize + vmByteCodeSize + 0x3C + itemsSize*VM_CALL_SIZE;
+	// 3C 就是VMEntry[]大小
 	BYTE* hNewMem = NULL;
-	hNewMem = (BYTE*)malloc(newSecSize);
+	hNewMem = (BYTE*)malloc(dwNewSectionSize);
 	if (hNewMem == NULL)
 	{
-		free(protectedCodeOffset);
-		free(items2);
+		ERROR2(TEXT("[SIZE] Protection failed."));
 		return;
 	}
 	int curPos = 0;
 	memmove(hNewMem, hVMMemory, vmSize);
 	curPos += vmSize;
 
-	//setting new entry point
-	DWORD oldEntry = protectedFile.GetNtHeaders()->OptionalHeader.AddressOfEntryPoint;
-	protectedFile.GetNtHeaders()->OptionalHeader.AddressOfEntryPoint = newRVA + vmSize;
+	SetVMEntryPoint(protectedFile, dwNewSectionRVA, vmSize, dwVMInit, hNewMem, curPos);
 
-	//VirtualAlloc at 0xA0F8
-	static char loaderAlloc[] = 
-	{
-		0xE8, 0x00, 0x00, 0x00, 0x00,       //CALL    vm_test2.004120DA
-		0x5B,                               //POP     EBX
-		0x81, 0xEB, 0xDA, 0x20, 0x01, 0x00, //SUB     EBX,120DA
-		0x6A, 0x40,							//PUSH    40
-		0x68, 0x00, 0x10, 0x00, 0x00,       //PUSH    1000
-		0x68, 0x00, 0x10, 0x00, 0x00,       //PUSH    1000
-		0x6A, 0x00,                         //PUSH    0
-		0xB8, 0x34, 0x12, 0x00, 0x00,       //MOV     EAX,1234
-		0x03, 0xC3,                         //ADD     EAX,EBX
-		0xFF, 0x10,                         //CALL    [EAX]
-		0x53,                               //PUSH    EBX
-		0x05, 0x00, 0x10, 0x00, 0x00,       //ADD     EAX,1000
-		0x50,                               //PUSH    EAX
-		0xB8, 0x34, 0x12, 0x00, 0x00,       //MOV     EAX,1234
-		0x03, 0xC3,                         //ADD     EAX,EBX
-		0xFF, 0xD0,                         //CALL    EAX
-		0xB8, 0x34, 0x12, 0x00, 0x00,       //MOV     EAX,1234
-		0x03, 0xC3,                         //ADD     EAX,EBX
-		0xFF, 0xE0                          //JMP     EAX
-	};
-	//correcting loader:
-	*(DWORD*)(loaderAlloc + 8) = newRVA + vmSize + 5;
-	*(DWORD*)(loaderAlloc + 27) = vAlloc;
-	*(DWORD*)(loaderAlloc + 43) = newRVA + vmInit;
-	*(DWORD*)(loaderAlloc + 52) = oldEntry;
-	memmove(hNewMem + vmSize, loaderAlloc, sizeof(loaderAlloc));
-	curPos += sizeof(loaderAlloc);
-
-
-	// VirtualMachineOPCODE
-	for (int i = 0; i < itemsCnt; i++)
-	{
-		// 真正的加壳部分
-		int _tts = vm_protect(protectedFile.GetPEHandle() + items2[i*2], 
-			items2[i*2 + 1], hNewMem + curPos, 
-			protectedCodeOffset[i*2], 
-			(BYTE*)protectedFile.GetBaseRelocationTable(), 
-			protectedFile.GetNtHeaders()->OptionalHeader.ImageBase);
-		//MAKE_VM_CALL2(ntHeaders->OptionalHeader.ImageBase, protectedFile.GetPEHandle() + items2[i*2], protectedCodeOffset[i*2], newRVA + curPos, items2[i*2 + 1], newRVA + vmStart, hNewMem + curPos + _tts, newRVA + curPos + _tts);
-		MAKE_VM_CALL2(protectedFile.GetPEHandle() + items2[i * 2], 
-			protectedCodeOffset[i * 2], 
-			newRVA + curPos, items2[i * 2 + 1], 
-			newRVA + vmStart, hNewMem + curPos + _tts, 
-			newRVA + curPos + _tts);
-		curPos += _tts + VM_CALL_SIZE;
-	}
-
+	SetByteCode(protectedFile, curPos, dwNewSectionRVA, dwVMStart, protectedCodeRVA, itemsSize, protectedCoedFOA, hNewMem);
 	
-	DWORD oldNewSecSize = newSecSize;
-	newSecSize = TRUNC(newSecSize, protectedFile.GetNtHeaders()->OptionalHeader.FileAlignment);
+	DWORD dwNewSectionFileAlignmentSize;
+	dwNewSectionFileAlignmentSize = SectionAlignment(dwNewSectionSize, protectedFile.GetNtHeaders()->OptionalHeader.FileAlignment);
 
-	//adding section	
-	sectionHeaders += protectedFile.GetNtHeaders()->FileHeader.NumberOfSections;
-	protectedFile.GetNtHeaders()->FileHeader.NumberOfSections++;
-	memset(sectionHeaders, 0, sizeof(IMAGE_SECTION_HEADER));
-	sectionHeaders->Characteristics = 0xE00000E0;
-	sectionHeaders->Misc.VirtualSize = TRUNC(newSecSize, protectedFile.GetNtHeaders()->OptionalHeader.SectionAlignment);
-	protectedFile.GetNtHeaders()->OptionalHeader.SizeOfImage += sectionHeaders->Misc.VirtualSize;
-	memmove(sectionHeaders->Name, ".VM", 4);
-	sectionHeaders->PointerToRawData = fSize;
-	sectionHeaders->SizeOfRawData = newSecSize;
-	sectionHeaders->VirtualAddress = newRVA;
+	AddSection(protectedFile.GetSectionHeaders(), protectedFile, dwNewSectionRVA, dwNewSectionFileAlignmentSize);
 
-	char newFName[MAX_PATH] = {0};
-	StringOperator<wchar_t*> cFileName(fileName);
-	strcpy(newFName, cFileName.wchar2char());
-	if (strlen(newFName) > 4)
-	{
-		newFName[strlen(newFName) - 4] = 0;
-	}
-	strcat(newFName, "_vmed.exe");
-	
-	StringOperator<char*> wNewFName(newFName);
-	HANDLE hFile = CreateFile(wNewFName.char2wchar(), GENERIC_WRITE, FILE_SHARE_READ, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
-	WriteFile(hFile, protectedFile.GetPEHandle(), fSize, &tmp, 0);
-	WriteFile(hFile, hNewMem, oldNewSecSize, &tmp, 0);
-	memset(hNewMem, 0, newSecSize - oldNewSecSize);
-	WriteFile(hFile, hNewMem, newSecSize - oldNewSecSize, &tmp, 0);
-	CloseHandle(hFile);
+	MemoryWriteToFile(fileName, protectedFile, dwNewSectionSize, dwNewSectionFileAlignmentSize, hNewMem);
 
 	free(hNewMem);
-	free(protectedCodeOffset);
-	free(items2);
+	free(protectedCodeRVA);
+	free(protectedCoedFOA);
 }
 
 int WINAPI DialogProc(HWND hDlg, UINT uMSg, WPARAM wParam, LPARAM lParam)
@@ -316,7 +165,7 @@ int WINAPI DialogProc(HWND hDlg, UINT uMSg, WPARAM wParam, LPARAM lParam)
 						{
 							wchar_t fileName[MAX_PATH];
 							if (GetDlgItemText(hDlg, EDT_FILE, fileName, MAX_PATH))
-								doProtect(GetDlgItem(hDlg, LB_LIST), fileName);
+								DoProtect(GetDlgItem(hDlg, LB_LIST), fileName);
 
 							MessageBox(hDlg, L"Finished.", L"Info", MB_ICONINFORMATION);
 						}

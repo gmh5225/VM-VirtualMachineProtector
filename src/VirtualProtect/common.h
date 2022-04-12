@@ -19,8 +19,8 @@ extern BYTE _vm_poly_dec[121];
 int GetCodeMap(BYTE* codeBase, int codeSize, DWORD* codeMap);
 void GetPolyEncDec();
 void GetPermutation(BYTE* buf, int size);
-void invPerm256(BYTE* buf);
-void invPerm16(BYTE* buf);
+void KeyToValue256(BYTE* buf);
+void KeyToValue16(BYTE* buf);
 void permutateJcc(WORD* buf, int elemCount, BYTE* permutation);
 int GetRelocMap(const BYTE* relocSeg, DWORD funcRVA, int funcSize, DWORD* relocMap);
 

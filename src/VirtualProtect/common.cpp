@@ -50,7 +50,7 @@ void GetPolyEncDec()
 		{
 			_vm_poly_enc[ptr] = 0xEB;
 			_vm_poly_enc[ptr+1] = 0x01;
-			_vm_poly_enc[ptr+2] = rand();
+			_vm_poly_enc[ptr+2] = rand();	// ª®÷∏¡Ó
 			_vm_poly_dec[114 - ptr - 1] = 0xEB;
 			_vm_poly_dec[114 - ptr] = 0x01;
 			_vm_poly_dec[114 - ptr + 1] = rand();
@@ -178,7 +178,7 @@ void GetPermutation(BYTE* buf, int size)
 	}
 }
 
-void invPerm256(BYTE* buf)
+void KeyToValue256(BYTE* buf)
 {
 	BYTE tmp[256];
 	for (int i = 0; i < 256; i++)
@@ -188,7 +188,7 @@ void invPerm256(BYTE* buf)
 	memmove(buf, tmp, 256);
 }
 
-void invPerm16(BYTE* buf)
+void KeyToValue16(BYTE* buf)
 {
 	BYTE tmp[16];
 	for (int i = 0; i < 16; i++)
@@ -200,7 +200,7 @@ void invPerm16(BYTE* buf)
 
 void permutateJcc(WORD* buf, int elemCount, BYTE* permutation)
 {
-	WORD temp[16];
+	WORD temp[16] = { 0 };
 	for (int i = 0; i < elemCount; i++)
 	{
 		temp[i] = buf[permutation[i]];

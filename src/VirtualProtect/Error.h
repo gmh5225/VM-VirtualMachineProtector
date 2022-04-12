@@ -10,8 +10,8 @@ void Error(const std::wstring);
 #define ERROR2(a) \
 	{ \
 		MessageBox(0, a, TEXT("Error"), MB_ICONERROR); \
-		free(protectedCodeOffset); \
-		free(items2); \
+		free(protectedCodeRVA); \
+		free(protectedCoedFOA); \
 		return; \
 	}
 #endif // !__ERROR_H__
